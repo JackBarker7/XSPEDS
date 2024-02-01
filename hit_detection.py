@@ -46,11 +46,8 @@ def bfs(
     return (current_hit, visited)
 
 
-def locate_hits(img: np.ndarray, n_sigma: float) -> list[list[tuple[int]]]:
-    """Goes through an image, and first gets all the "hot" pixels (ones that are
-    sufficiently different from the average to be a photon hit).
-
-    Then, we go through the image, and for each hot pixel, search its surroundings to
+def locate_hits(hot_pixels: np.ndarray, visited: np.ndarray = None) -> list[list[tuple[int]]]:
+    """Go through the image, and for each hot pixel, search its surroundings to
     find the extent of the hit. We only stop searching when there are no more hot pixels
     neighbouring the current area.
 
@@ -58,15 +55,14 @@ def locate_hits(img: np.ndarray, n_sigma: float) -> list[list[tuple[int]]]:
     all its points.
     """
 
-    hot_pixels = get_hot_pixels(img, n_sigma)
-
-    visited = np.zeros(img.shape)
+    if visited is None:
+        visited = np.zeros(hot_pixels.shape)
 
     hits = []
 
-    for i in range(img.shape[0]):
-        for j in range(img.shape[1]):
-            if (not visited[i, j]) and hot_pixels[i,j]:
+    for i in range(hot_pixels.shape[0]):
+        for j in range(hot_pixels.shape[1]):
+            if (not visited[i, j]) and hot_pixels[i, j]:
                 current_hit, visited = bfs((i, j), hot_pixels, visited)
                 hits.append(current_hit)
 

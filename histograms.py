@@ -14,7 +14,8 @@ def make_histogram(img: np.ndarray, n_bins: int, xrange: list[int] = None):
     1. img : np.ndarray
         2D array of image data
     2. n_bins : int
-        Number of bins to use in histogram
+        Number of bins to use in histogram. If n_bins = -1, then the number of bins is
+        equal to the number of values in xrange.
     3. xrange : list[int]
         Defines range over which histogram should be calculated. If not specified,
         defaults to [0, img.max()]
@@ -26,11 +27,19 @@ def make_histogram(img: np.ndarray, n_bins: int, xrange: list[int] = None):
     """
 
     if xrange is None:
-        xrange = [0, img.max()]
+        xrange = [img.min(), img.max()]
+    
+    if n_bins == -1:
+        n_bins = int(xrange[1] - xrange[0])
 
     if xrange[1] < img.max():
         print(
             "Warning from make_histogram: upper limit of xrange has been set below max value in histogram"
+        )
+
+    if n_bins > xrange[1] - xrange[0]:
+        print(
+            "Warning from make_histogram: number of bins is greater than range of values in histogram"
         )
 
     hist, bin_edges = np.histogram(img, bins=n_bins, range=xrange)
@@ -109,7 +118,7 @@ def remove_pedestal(
 
 def subtract_pedestal(img: np.ndarray, pedestal_params: list[float]) -> np.ndarray:
     """Subtract intensity corresponding to centre point of pedestal from all points.
-    
+
     ### Parameters
     1. img : np.ndarray
         Image to be processed
@@ -120,7 +129,7 @@ def subtract_pedestal(img: np.ndarray, pedestal_params: list[float]) -> np.ndarr
     ### Returns
     np.ndarray
         Image with centre of pedestal subtracted
-        """
+    """
 
     img = img.copy()
 
