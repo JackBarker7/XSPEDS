@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.optimize import curve_fit
-
+from file_utils import load_image
 
 def gaussian_model(x: float, a: float, b: float, c: float) -> float:
     """Gaussian fitting model"""
@@ -138,3 +138,15 @@ def subtract_pedestal(img: np.ndarray, pedestal_params: list[float]) -> np.ndarr
     img -= pedestal_mean
 
     return img
+
+def load_and_subtract_pedestal(imgno, base_path="data/images/image"):
+    """
+    Given an image number, loads and subtracts the pedestal from the image.
+    """
+    # Load an image
+    img = load_image(f"{base_path}{imgno}.npy")
+    bin_centres, hist_data = make_histogram(img, 100)
+
+    # Fit and subtract the pedestal
+    pedestal_params, _ = fit_pedestal(bin_centres, hist_data)
+    return subtract_pedestal(img, pedestal_params)

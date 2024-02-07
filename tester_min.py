@@ -28,18 +28,13 @@ print(f"Loaded {len(image_data)} images.")
 
 
 # Plot a good dataset - here index #8 (but there are others too!)
-image_no = 9
-plt.imshow(image_data[image_no], norm=LogNorm())
+image_no = 8
+master_dark = np.load("data/master_dark.npy")
+plt.imshow(image_data[image_no] - master_dark, cmap="jet")
 plt.colorbar()
 plt.show()
 
 # The histogram of the data will help show possible single photon hits
-plt.hist(image_data[image_no].flatten(), bins=600)
+plt.hist(image_data[image_no].flatten(), bins=200)
 plt.yscale("log")
 plt.show()
-
-# 2, 4, 6, (7, 8), 11, 14, 16, 17, 19
-
-# Good: 1, 2, 4, 6, 7, 8, 11, 14, 16, 17, 19
-
-# Definitely Dark: 3, 5, 9, 10, 12, 13, 15, 18
