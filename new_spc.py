@@ -3,13 +3,53 @@ from scipy.optimize import curve_fit
 from histograms import make_histogram, gaussian_model
 
 
+def valid_neighbours(loc: tuple[int], hot_pixels: np.ndarray):
+    """Takes a location in an image, and returns all directly neighbouring pixels
+    that are "hot" pixels."""
+    ns = []
 
-from improved_spc import get_primary_hit_locations
-from hit_detection import bfs
+    nrows, ncols = hot_pixels.shape
+
+    if loc[0] != 0:
+        ns.append((loc[0] - 1, loc[1]))
+    if loc[0] != nrows - 1:
+        ns.append((loc[0] + 1, loc[1]))
+    if loc[1] != 0:
+        ns.append((loc[0], loc[1] - 1))
+    if loc[1] != ncols - 1:
+        ns.append((loc[0], loc[1] + 1))
+
+    valid = []
+    for n in ns:
+        if hot_pixels[n]:
+            valid.append(n)
+    return valid
+
+
+def bfs(
+    loc: tuple[int], hot_pixels: np.ndarray, visited: np.ndarray
+) -> tuple[list[tuple[int]], np.ndarray]:
+    """Performs breadth first search to identify all hot pixels in the same region as a
+    given hot pixel."""
+    queue = []
+    current_hit = []
+
+    queue.append(loc)
+
+    while len(queue) > 0:
+        source = queue.pop(0)
+        visited[source] = 1
+        current_hit.append(source)
+
+        for node in valid_neighbours(source, hot_pixels):
+            if not visited[node]:
+                queue.append(node)
+
+    return (current_hit, visited)
 
 
 def get_primary_hits(img, primary_hits, secondary_hits, pedestal_sigma, n_sigma):
-    primary_hit_locations = get_primary_hit_locations(primary_hits)
+    primary_hit_locations = np.array(np.nonzero(primary_hits)).transpose()
 
     final_hit_values = np.zeros(len(primary_hit_locations))
     final_hit_locations = []
@@ -83,14 +123,13 @@ def get_secondary_hits(
     return final_hit_values[final_hit_values > 0], np.array(final_hit_locations)
 
 
-
-
 def get_all_hits_and_locations(img, primary_threshold, secondary_threshold, n_sigma):
-
 
     # Fitting the pedestal
     bin_centres, hist_data = make_histogram(img, -1)
-    pedestal_params, _ = curve_fit(gaussian_model, bin_centres, hist_data, p0=[1e6, 0, 10])
+    pedestal_params, _ = curve_fit(
+        gaussian_model, bin_centres, hist_data, p0=[1e6, 0, 10]
+    )
     pedestal_sigma = pedestal_params[2]
 
     # Getting the hits
@@ -113,6 +152,7 @@ def get_all_hits_and_locations(img, primary_threshold, secondary_threshold, n_si
     all_hit_locations = np.concatenate((primary_hit_locations, secondary_hit_locations))
 
     return all_hit_values, all_hit_locations
+
 
 def create_image_of_hits(shape, hit_values, hit_locations):
     """Given an image shape, and a list of hit locations and values, returns an image

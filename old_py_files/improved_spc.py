@@ -7,7 +7,7 @@ from histograms import (
     fit_pedestal,
     load_and_subtract_pedestal,
 )
-from hit_detection import locate_hits
+from old_py_files.hit_detection import locate_hits
 
 
 def locate_primary_threshold(

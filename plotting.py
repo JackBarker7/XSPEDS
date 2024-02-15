@@ -24,7 +24,7 @@ from histograms import subtract_pedestal
 img = subtract_pedestal(img, pedestal_params)
 
 
-from hit_detection import locate_hits
+from old_py_files.hit_detection import locate_hits
 
 hits = locate_hits(img, 5)
 
