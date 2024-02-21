@@ -111,6 +111,162 @@ def locate_peaks(
     return peaks, lineout[peaks]
 
 
+def locate_bragg_lines(
+    img: np.ndarray,
+    search_ys: list[int] = [200, 1000, 1800],
+    dy: int = 200,
+    xavg_period: int = 20,
+    n_lines: int = 2,
+    min_sep: int = 100,
+    sobel_shape: tuple[int, int] = (25, 25),
+) -> list[list[float]]:
+    """Locate Bragg lines in an image. Search for n_lines lines by looking at lineouts
+    of the convolved image at 3 y locations, determined by search_ys.
+
+    Lineouts have a width of 2*dy and are averaged over xavg_period pixels.
+
+    Bragg lines must be sepateted by at least min_sep pixels.
+
+    Returns centres of Bragg lines and their radii, in the format [[h1, k1, r1], [h2, k2, r2], ...]
+
+    Returned in descending order of radius (largest radius first)
+    """
+
+    assert min(search_ys) - dy >= 0, "Lineout would be out of bounds"
+    assert max(search_ys) + dy < img.shape[0], "Lineout would be out of bounds"
+
+    convolved_img = convolve_image(img, sobel_matrix(sobel_shape))
+
+    # get the three lineouts
+    lineouts = [make_lineout(convolved_img, y, dy, xavg_period) for y in search_ys]
+
+    # locate the peaks in each lineout
+    # so, we have [[peak1, peak2], [peak1, peak2], [peak1, peak2]
+    peak_locs = [locate_peaks(lineout, n_lines, min_sep)[0] for lineout in lineouts]
+    # transpose this list so that we have [[peak1, peak1, peak1], [peak2, peak2, peak2]]
+    peak_locs = np.array(peak_locs).T
+
+    bragg_lines = []
+
+    for bragg_line_locs in peak_locs:
+        # peak_locs gives the x locations of the peaks in the lineout
+
+        bragg_lines.append(find_circle(*bragg_line_locs, *search_ys))
+
+    return sorted(bragg_lines, key=lambda x: x[2], reverse=True)
+
+
+def create_energy_map(
+    shape: tuple[int],
+    bragg_lines: list[tuple[float, float, float]],
+    energies: list[float],
+    # new parameters
+    r1: float,
+    r2: float,
+    centre: tuple[float, float],
+) -> tuple[np.ndarray, tuple[float, float], float, float]:
+    """
+    Use Bragg lines and line energies to create an energy map for the image
+    Energies should be in the same order as the Bragg lines
+    We expect 2 lines
+
+    Returns (energy map, (circle centre), k, D)
+    """
+
+    assert len(bragg_lines) == len(
+        energies
+    ), "Must have same number of lines and energies"
+    assert len(bragg_lines) == 2, "Must have 2 lines"
+
+    assert (r1 < r2 and energies[0] < energies[1]) or (
+        r1 > r2 and energies[0] > energies[1]
+    ), "Energies and radii must be in the correct order for the formula to be valid."
+
+    """
+    # Centre should be the same for both
+
+    centre = (
+        (bragg_lines[0][0] + bragg_lines[1][0]) / 2,
+        (bragg_lines[0][1] + bragg_lines[1][1]) / 2,
+    )
+
+    centre = bragg_lines[0][:2]
+
+    # Largest radius first. We square them now since they are squared in the equation
+
+    r12 = bragg_lines[0][2] ** 2
+    r22 = bragg_lines[1][2] ** 2
+    r1 = bragg_lines[0][2]
+    r2 = bragg_lines[1][2]
+
+    E12 = energies[0] ** 2
+    E22 = energies[1] ** 2
+
+    # Valid for E1>E2, r2>r1
+
+    # k = np.sqrt((E12 * r12 - E22 * r22) / (r12 - r22))
+
+    # D = np.sqrt(r12 * r22 * (E22 - E12) / (E12 * r12 - E22 * r22))
+
+    ## Trying the cos(theta) version. r1<r2, E1<E2 or vice versa
+
+    two_d = 15.96e-10
+
+    k = constants.h * constants.c / (two_d*constants.e) # in eV
+
+    # D = np.sqrt((E22 * r12 - E12 * r22) / (E12 - E22))
+    D1 = r1/np.sqrt(E12/(k**2) -1)
+    D2 = r2/np.sqrt(E22/(k**2) -1)
+    #D1 = r1*np.sqrt(E12/(k**2) -1)
+    #D2 = r2*np.sqrt(E22/(k**2) -1)
+
+    D = (D1+D2)/2
+
+    # get the indices and create the energy map
+
+    indices = np.indices(shape)
+
+    radii = np.sqrt((indices[0] - centre[1]) ** 2 + (indices[1] - centre[0]) ** 2)
+
+    #energy_map = k / radii * np.sqrt(radii**2 + D**2)
+    energy_map = k / D * np.sqrt(radii**2 + D**2)
+
+    return energy_map, centre, k, D
+    """
+
+    two_d = 15.96e-10
+
+    k = constants.h * constants.c / (two_d * constants.e)
+
+    E12 = energies[0] ** 2
+    E22 = energies[1] ** 2
+
+    D1 = r1 / np.sqrt(E12 / (k**2) - 1)
+    D2 = r2 / np.sqrt(E22 / (k**2) - 1)
+
+    D = (D1 + D2) / 2
+
+    indices = np.indices(shape)
+
+    radii = np.sqrt((indices[0] - centre[1]) ** 2 + (indices[1] - centre[0]) ** 2)
+
+    energy_map = (k / D) * np.sqrt(radii**2 + D**2)
+
+    return energy_map, k, D
+
+
+def get_energies(locs: np.ndarray, centre: tuple[float, float], k: float, D: float):
+    """
+    Return the calculated energy E=k/r for a given location.
+    Centre in form (x,y)
+    locations in form [[row, col], [row, col], ... ]
+    """
+    radii = np.sqrt((locs[:, 1] - centre[0]) ** 2 + (locs[:, 0] - centre[1]) ** 2)
+
+    # return (k / radii) * np.sqrt(radii**2 + D**2)
+    return (k / D) * np.sqrt(radii**2 + D**2)
+
+
 def create_line_histogram(
     img: np.ndarray,
     radius: float,
@@ -176,7 +332,6 @@ class EnergyMap(object):
         self.min_sep = min_sep
         self.sobel_shape = sobel_shape
         self.energies = energies
-        self.centre: tuple[float, float] = None
         self.k: float = None
         self.D: float = None
 

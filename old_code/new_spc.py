@@ -237,101 +237,6 @@ class SPC(object):
         else:
             self.img = self.raw_img
 
-    def get_primary_hits(self):
-
-        primary_hit_locations = np.array(np.nonzero(self.primary_hits)).transpose()
-
-        final_hit_values = np.zeros(len(primary_hit_locations))
-        final_hit_locations = []
-        used_secondaries = np.zeros_like(self.secondary_hits)
-
-        # pixels that are allowed for calculation
-
-        visited_valid = np.zeros_like(self.valid_pixels)
-
-        for i, loc in enumerate(primary_hit_locations):
-            loc = tuple(loc)
-
-            # if the pixel has already been used, skip it
-            if visited_valid[loc]:
-                continue
-            else:
-                neighbours, visited_valid = bfs(loc, self.valid_pixels, visited_valid)
-
-                # TODO: Fix bfs. Currently sometimes returns same pixel twice.
-                neighbours = np.unique(np.array(neighbours), axis=0)
-                # this will include the primary hit pixel
-                final_hit_values[i] = np.sum(self.img[tuple(neighbours.T)])
-                final_hit_locations.append(loc)
-
-        used_secondaries = np.copy(visited_valid)
-        used_secondaries = np.where(self.secondary_hits, used_secondaries, 0)
-
-        self.primary_hit_values = final_hit_values[final_hit_values > 0]
-        self.primary_hit_locations = np.array(final_hit_locations)
-
-        return used_secondaries, visited_valid
-
-    def get_secondary_hits(self, used_secondaries, visited_valid):
-
-        all_secondary_pixels = np.array(np.nonzero(self.secondary_hits)).transpose()
-
-        final_hit_values = np.zeros(len(all_secondary_pixels))
-        final_hit_locations = []
-
-        for i, loc in enumerate(all_secondary_pixels):
-            loc = tuple(loc)
-
-            # if the pixel has already been used, skip it
-            if used_secondaries[loc] or visited_valid[loc]:
-                continue
-            else:
-                neighbours, visited_valid = bfs(loc, self.valid_pixels, visited_valid)
-
-                if len(neighbours) < 2:
-                    continue
-
-                neighbours = np.unique(np.array(neighbours), axis=0)
-                # this will include the hit pixel
-                final_hit_values[i] = np.sum(self.img[tuple(neighbours.T)])
-
-                # final location is integer rounded weighted average of the neighbours
-                final_hit_locations.append(
-                    np.rint(
-                        np.average(
-                            neighbours, axis=0, weights=self.img[tuple(neighbours.T)]
-                        )
-                    )
-                )
-
-        self.secondary_hit_values = final_hit_values[final_hit_values > 0]
-        self.secondary_hit_locations = np.array(final_hit_locations)
-
-    def create_image_of_hits(self):
-        """Given an image shape, and a list of hit locations and values, returns an image
-        with the hits drawn on it."""
-
-        self.all_hits_img = np.zeros(self.img.shape)
-
-        for i, loc in enumerate(self.all_hit_locations):
-            loc = tuple(np.rint(loc).astype(int))
-            self.all_hits_img[loc] = self.all_hit_values[i]
-
-
-class DoubleHitException(Exception):
-    pass
-
-
-class ShapeCheckingSPC(SPC):
-
-    def __init__(
-        self, img, primary_threshold, secondary_threshold, n_sigma, noise_method="dark"
-    ):
-        self.get_allowed_shapes()
-        super().__init__(
-            img, primary_threshold, secondary_threshold, n_sigma, noise_method
-        )
-
     def get_allowed_shapes(self):
         allowed_base_shapes = [
             [[0, 0, 0], [0, 1, 0], [0, 0, 0]],  # centre only
@@ -407,14 +312,17 @@ class ShapeCheckingSPC(SPC):
         # no pixels below the second threshold, then we have a double hit
 
         is_allowed = False
+        iterations = 0
         while not is_allowed:
+            iterations += 1
             is_allowed = is_allowed_shape(hit_matrix, self.allowed_shapes)
             if not is_allowed:
                 # get the location of the pixel with the lowest value, excluding pixels that are 0
                 # a bit of a hack, but it works
-                # set all zeros to the maximum value, so that they are not selected
+                # set all zeros to the np.inf, so that they are not selected
                 temp = hit_matrix.copy()
-                temp[temp == 0] = np.max(temp)
+
+                temp[temp == 0] = np.inf
                 # get the location of the minimum value
                 min_loc = np.unravel_index(np.argmin(temp), hit_matrix.shape)
                 if hit_matrix[*min_loc] > self.secondary_threshold:
@@ -462,7 +370,7 @@ class ShapeCheckingSPC(SPC):
                             neighbours, axis=0, weights=self.img[tuple(neighbours.T)]
                         )
                     )
-                    val = np.sum(self.img[tuple(neighbours.T)])
+                    val = np.sum(self.img[tuple(neighbours.T)]) / 2
 
                     final_hit_values += [val] * 2
                     final_hit_locations += [loc] * 2
@@ -512,7 +420,7 @@ class ShapeCheckingSPC(SPC):
                             neighbours, axis=0, weights=self.img[tuple(neighbours.T)]
                         )
                     )
-                    val = np.sum(self.img[tuple(neighbours.T)])
+                    val = np.sum(self.img[tuple(neighbours.T)]) / 2
 
                     final_hit_values += [val] * 2
                     final_hit_locations += [loc] * 2
@@ -523,3 +431,23 @@ class ShapeCheckingSPC(SPC):
         self.secondary_hit_values = final_hit_values[final_hit_values > 0]
         self.secondary_hit_locations = np.array(final_hit_locations)
 
+    def create_image_of_hits(self):
+        """Given an image shape, and a list of hit locations and values, returns an image
+        with the hits drawn on it."""
+
+        self.all_hits_img = np.zeros(self.img.shape)
+
+        for i, loc in enumerate(self.all_hit_locations):
+            loc = tuple(np.rint(loc).astype(int))
+            self.all_hits_img[loc] = self.all_hit_values[i]
+
+    
+    def count_double_hits(self, hit_locations) -> int:
+        """Count the number of double hits in an array of hit locations."""
+        unique, counts = np.unique(hit_locations, axis = 0, return_counts=True)
+        return len(unique[counts > 1])
+
+
+
+class DoubleHitException(Exception):
+    pass
