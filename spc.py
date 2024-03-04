@@ -3,6 +3,14 @@ from scipy.optimize import curve_fit
 from histograms import make_histogram, gaussian_model
 
 
+def is_allowed_shape(hit_matrix, allowed_shapes):
+    current_shape = hit_matrix > 0
+    for shape in allowed_shapes:
+        if np.all(current_shape == shape):
+            return True
+    return False
+
+
 def valid_neighbours(loc: tuple[int], hot_pixels: np.ndarray):
     """Takes a location in an image, and returns all directly neighbouring pixels
     that are "hot" pixels."""
@@ -47,6 +55,36 @@ def bfs(
 
     return (current_hit, visited)
 
+
+def gaussian_2d(xy, a, mu_x, sigma_x, mu_y, sigma_y):
+    x, y = xy
+    return np.ravel(
+        a
+        * np.exp(-((x - mu_x) ** 2 / (2 * sigma_x**2)))
+        * np.exp(-((y - mu_y) ** 2 / (2 * sigma_y**2)))
+    )
+
+
+def fit_hit(
+    data: np.ndarray, centre_loc: tuple[int, int]
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    """Fits a 2D gaussian to a hit, given the 5x5 around the hit, and the location in
+    the main image of the centre pixel of this 5x5
+
+    centre_loc is in format (row, col)
+
+    returns the centre of the Gaussian (in format (row, col)), and its uncertainty"""
+    x, y = np.meshgrid(np.arange(5), np.arange(5))
+
+    p0 = [data.max(), 2, 1, 2, 1]  # assume hit is roughly at centre
+
+    popt, pcov = curve_fit(gaussian_2d, (x, y), data.ravel(), p0=p0)
+
+    u = np.sqrt(np.diag(pcov))
+
+    return (centre_loc[0] - 2 + popt[3], centre_loc[1] - 2 + popt[1]), (u[3], u[1])
+
+
 class SPC(object):
     def __init__(
         self,
@@ -54,18 +92,23 @@ class SPC(object):
         primary_threshold: float,
         secondary_threshold: float,
         n_sigma: float,
-        noise_method: str = "dark",
+        treat_double_hits: bool = True,
+        image_indices: list[tuple[int, int]] = None,
     ):
         # initialise attributes
         self.raw_img = img.copy()
         self.primary_threshold = primary_threshold
         self.secondary_threshold = secondary_threshold
         self.n_sigma = n_sigma
-        self.noise_method = noise_method
+        self.treat_double_hits = treat_double_hits
+        self.image_indices = image_indices
 
         self.img: np.ndarray = None
         self.pedestal_params: np.ndarray = None
         self.pedestal_sigma: float = None
+        self.n_single_hits: int = 0
+        self.n_double_hits: int = 0
+        self.double_hit_locs: list[tuple[int, int]] = []
 
         self.remove_noise()
 
@@ -112,17 +155,28 @@ class SPC(object):
         self.create_image_of_hits()
 
     def remove_noise(self):
-        if self.noise_method == "dark":
-            master_dark = np.load("data/master_dark.npy")
+        master_dark = np.load("data/master_dark.npy")
+        if self.image_indices is None:
             self.img = self.raw_img - master_dark
         else:
-            self.img = self.raw_img
+            self.img = (
+                self.raw_img[
+                    self.image_indices[0][0] : self.image_indices[0][1],
+                    self.image_indices[1][0] : self.image_indices[1][1],
+                ]
+                - master_dark[
+                    self.image_indices[0][0] : self.image_indices[0][1],
+                    self.image_indices[1][0] : self.image_indices[1][1],
+                ]
+            )
 
     def get_allowed_shapes(self):
         allowed_base_shapes = [
             [[0, 0, 0], [0, 1, 0], [0, 0, 0]],  # centre only
             [[0, 0, 0], [0, 1, 1], [0, 0, 0]],  # 2 in a row
-            [[0, 1, 0], [0, 1, 1], [0, 0, 0]],  # L shape
+            [[0, 1, 0], [0, 1, 1], [0, 0, 0]],  # L shape 1
+            [[1, 0, 0], [1, 1, 0], [0, 0, 0]],  # L shape 2
+            [[1, 1, 0], [0, 1, 0], [0, 0, 0]],  # L shape 3
             [[0, 1, 1], [0, 1, 1], [0, 0, 0]],  # square
         ]
 
@@ -181,21 +235,13 @@ class SPC(object):
             hit_matrix[loc[0], loc[1]] = val
 
         # we can now check if this matrix is one of the allowed shapes
-        def is_allowed_shape(hit_matrix, allowed_shapes):
-            current_shape = hit_matrix > 0
-            for shape in allowed_shapes:
-                if np.all(current_shape == shape):
-                    return True
-            return False
 
         # check if the hit matrix is one of the allowed shapes. If it is not, keep removing the
         # pixel with the lowest value until it is. If it is not a valid shape, and there are
         # no pixels below the second threshold, then we have a double hit
 
         is_allowed = False
-        iterations = 0
         while not is_allowed:
-            iterations += 1
             is_allowed = is_allowed_shape(hit_matrix, self.allowed_shapes)
             if not is_allowed:
                 # get the location of the pixel with the lowest value, excluding pixels that are 0
@@ -226,7 +272,7 @@ class SPC(object):
 
         visited_valid = np.zeros_like(self.valid_pixels)
 
-        for i, loc in enumerate(primary_hit_locations):
+        for loc in primary_hit_locations:
             loc = tuple(loc)
 
             # if the pixel has already been used, skip it
@@ -245,16 +291,26 @@ class SPC(object):
                     # this will include the primary hit pixel
                     final_hit_values.append(value)
                     final_hit_locations.append(loc)
+                    self.n_single_hits += 1
                 except DoubleHitException:
                     loc = np.rint(
                         np.average(
                             neighbours, axis=0, weights=self.img[tuple(neighbours.T)]
                         )
                     )
-                    val = np.sum(self.img[tuple(neighbours.T)]) / 2
 
-                    final_hit_values += [val] * 2
-                    final_hit_locations += [loc] * 2
+                    self.n_double_hits += 1
+                    self.double_hit_locs.append(loc)
+                    if self.treat_double_hits:
+                        val = np.sum(self.img[tuple(neighbours.T)]) / 2
+
+                        final_hit_values += [val] * 2
+                        final_hit_locations += [loc] * 2
+                    else:
+                        val = np.sum(self.img[tuple(neighbours.T)])
+
+                        final_hit_values.append(val)
+                        final_hit_locations.append(loc)
 
         used_secondaries = np.copy(visited_valid)
         used_secondaries = np.where(self.secondary_hits, used_secondaries, 0)
@@ -273,7 +329,7 @@ class SPC(object):
         final_hit_values = []
         final_hit_locations = []
 
-        for i, loc in enumerate(all_secondary_pixels):
+        for loc in all_secondary_pixels:
             loc = tuple(loc)
 
             # if the pixel has already been used, skip it
@@ -283,29 +339,21 @@ class SPC(object):
                 neighbours, visited_valid = bfs(loc, self.valid_pixels, visited_valid)
 
                 if len(neighbours) < 2:
+                    # secondary hit has to be at least 2 pixels
                     continue
 
                 neighbours = np.unique(np.array(neighbours), axis=0)
 
-                try:
-                    loc, val = self.process_neighbours(
-                        neighbours, self.img[tuple(neighbours.T)]
-                    )
-                    # this will include the hit pixel
-                    final_hit_values.append(val)
-                    final_hit_locations.append(loc)
+                # secondary hits are not allowed to be double hits
+                values = self.img[tuple(neighbours.T)]
 
-                except DoubleHitException:
-                    loc = np.rint(
-                        np.average(
-                            neighbours, axis=0, weights=self.img[tuple(neighbours.T)]
-                        )
-                    )
-                    val = np.sum(self.img[tuple(neighbours.T)]) / 2
+                # location is the maximum value
+                loc = neighbours[np.argmax(values)]
+                val = sum(values)
 
-                    final_hit_values += [val] * 2
-                    final_hit_locations += [loc] * 2
-                # final location is integer rounded weighted average of the neighbours
+                final_hit_values.append(val)
+                final_hit_locations.append(loc)
+                self.n_single_hits += 1
 
         final_hit_values = np.array(final_hit_values)
 
@@ -322,12 +370,10 @@ class SPC(object):
             loc = tuple(np.rint(loc).astype(int))
             self.all_hits_img[loc] = self.all_hit_values[i]
 
-    
     def count_double_hits(self, hit_locations) -> int:
         """Count the number of double hits in an array of hit locations."""
-        unique, counts = np.unique(hit_locations, axis = 0, return_counts=True)
+        unique, counts = np.unique(hit_locations, axis=0, return_counts=True)
         return len(unique[counts > 1])
-
 
 
 class DoubleHitException(Exception):

@@ -1,46 +1,17 @@
-import matplotlib.pyplot as plt
-import numpy as np
-from matplotlib.colors import LogNorm
+from sympy import var
+from sympy import solve
 
-from file_utils import load_image
+l1y1, l1y2, l2y1, l2y2, l1x1, l1x2, l2x1, l2x2, D2, E1, E2, xc, yc, k, Ys = var(
+    "l1y1 l1y2 l2y1 l2y2 l1x1 l1x2 l2x1 l2x2 D2 E1 E2 xc yc k Ys"
+)
 
-# Load an image
-img = load_image("data/images/image8.npy")
-
-from histograms import fit_pedestal, make_histogram, gaussian_model
-
-
-# Create and plot histogram data
-
-bin_centres, hist_data = make_histogram(img, 100)
-
-
-# Fit and plot pedestal
-
-pedestal_params, _ = fit_pedestal(bin_centres, hist_data)
-
-from histograms import subtract_pedestal
-
-img = subtract_pedestal(img, pedestal_params)
-
-
-from old_py_files.hit_detection import locate_hits
-
-hits = locate_hits(img, 5)
-
-
-def highlight_cell(x, y, ax=None, **kwargs):
-    rect = plt.Rectangle((x - 0.5, y - 0.5), 1, 1, fill=False, **kwargs)
-    ax = ax or plt.gca()
-    ax.add_patch(rect)
-    return rect
-
-
-plt.figure(figsize=(35, 35))
-plt.imshow(img)
-
-for hit in hits:
-    for pixel in hit:
-        highlight_cell(pixel[1], pixel[0], color="red", linewidth=0.3)
-
-plt.show()
+print(solve(
+    [
+        (l1x1 - xc) ** 2 - E1 * Ys * (l1y1 - yc) ** 2 - E1*D2,
+        (l1x2 - xc) ** 2 - E1 * Ys * (l1y2 - yc) ** 2 - E1*D2,
+        (l2x1 - xc) ** 2 - E2 * Ys * (l2y1 - yc) ** 2 - E2*D2,
+        (l2x2 - xc) ** 2 - E2 * Ys * (l2y2 - yc) ** 2 - E2*D2,
+    ],
+    [xc, yc, D2, Ys],
+    dict=True,
+))
