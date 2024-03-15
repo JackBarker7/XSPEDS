@@ -116,6 +116,24 @@ class EnergyMap(object):
         sobel_size: int,
         energies: list[float],
     ) -> None:
+        
+        """Initialises an energy map.
+
+        `num_lineout_points` specifies number of y points to take lineouts at.
+
+        `dy` and `xavg_period` determine the averaging periods for the lineouts.
+
+        `n_lines` is the number of Bragg lines to fit to. Changing this from 2 may cause
+        issues.
+
+        `min_sep` determines the minimum number of pixels between the Bragg lines
+
+        `sobel_size` is the size of the Sobel matrix
+
+        `energies` is the energies of the Bragg lines. These are ordered automatically.
+        
+        """
+
         self.img = img.copy()
         self.dy = dy
         self.num_lineout_points = num_lineout_points

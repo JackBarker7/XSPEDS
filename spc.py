@@ -130,13 +130,29 @@ class SPC(object):
         img: np.ndarray,
         primary_threshold: float,
         secondary_threshold: float,
-        n_sigma: float,
+        n_sigma: float = 2,
         include_bad_fits: bool = False,
         padding: int = 1,
         fit_area_size: int = 3,
-        image_indices: list[tuple[int, int]] = None,
+        image_indices: list[tuple[int, int], tuple[int, int]] = None,
         fit_hits: bool = True,
     ) -> None:
+        """Initialise an SPC object.
+        `include_bad_fits` determines whether to keep or discard points for which the 
+        Gaussian fit failed.
+        
+        `padding` determines how much padding to add to the outside of the image, to allow
+        hits at the edge to be fitted properly.
+        
+        `fit_area_size` determines how large an area around each hit to fit to.
+        
+        `image_indices` means SPC is only applied to a subset of the image. Format is
+        [(min_row, max_row), (min_col, max_col)]
+        
+        `fit_hits` determines whether to fit a Gaussian to each hit or not.
+        """
+
+
         # initialise attributes
         self.raw_img = img.copy()
         self.primary_threshold = primary_threshold
