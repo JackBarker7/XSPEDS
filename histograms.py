@@ -2,12 +2,15 @@ import numpy as np
 from scipy.optimize import curve_fit
 from file_utils import load_image
 
+
 def gaussian_model(x: float, a: float, b: float, c: float) -> float:
     """Gaussian fitting model"""
     return a * np.exp(-np.power(x - b, 2) / (2 * np.power(c, 2)))
 
 
-def make_histogram(img: np.ndarray, n_bins: int, xrange: list[int] = None):
+def make_histogram(
+    img: np.ndarray, n_bins: int, xrange: list[int] = None
+) -> tuple[np.ndarray, np.ndarray]:
     """Makes a histogram out of image data.
 
     ### Parameters
@@ -28,7 +31,7 @@ def make_histogram(img: np.ndarray, n_bins: int, xrange: list[int] = None):
 
     if xrange is None:
         xrange = [img.min(), img.max()]
-    
+
     if n_bins == -1:
         n_bins = int(xrange[1] - xrange[0])
 
@@ -52,7 +55,9 @@ def make_histogram(img: np.ndarray, n_bins: int, xrange: list[int] = None):
     return bin_centres, hist
 
 
-def fit_pedestal(bin_centres: np.ndarray, hist: np.ndarray):
+def fit_pedestal(
+    bin_centres: np.ndarray, hist: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
     """Fits a gaussian model to histogram data.
 
     ### Parameters
@@ -139,7 +144,10 @@ def subtract_pedestal(img: np.ndarray, pedestal_params: list[float]) -> np.ndarr
 
     return img
 
-def load_and_subtract_pedestal(imgno, base_path="data/images/image"):
+
+def load_and_subtract_pedestal(
+    imgno: int, base_path: str = "data/images/image"
+) -> np.ndarray:
     """
     Given an image number, loads and subtracts the pedestal from the image.
     """

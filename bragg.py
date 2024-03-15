@@ -4,7 +4,6 @@ from scipy.signal import find_peaks
 from scipy.optimize import least_squares, curve_fit, OptimizeWarning
 from scipy.special import erf
 from spc import SPC
-import sympy as sp
 import math
 import sys
 
@@ -45,12 +44,12 @@ def sobel_matrix(size: int, absolute: bool = True) -> np.ndarray:
 
     # Row is expanded Sobel kernel
     row = np.zeros(size)
-    n=size-2
-    for i in range(1,n+1):
-        row[i] = math.comb(n,i-1) - math.comb(n,i)
+    n = size - 2
+    for i in range(1, n + 1):
+        row[i] = math.comb(n, i - 1) - math.comb(n, i)
 
-    # Col is Gaussian smoothing kernel, with SD size/4    
-    col = gaussian(np.arange(size), 1, size//2, size/4).reshape(-1, 1)
+    # Col is Gaussian smoothing kernel, with SD size/4
+    col = gaussian(np.arange(size), 1, size // 2, size / 4).reshape(-1, 1)
 
     kernel = row * col
     if absolute:
@@ -395,7 +394,9 @@ class Spectrum(object):
 
         return 0.5 * (erf(u_b) - erf(u_a))
 
-    def bin_count_unc(self, a_j: float, b_j: float, E_vals: np.ndarray, sigma_E_vals: np.ndarray) -> float:
+    def bin_count_unc(
+        self, a_j: float, b_j: float, E_vals: np.ndarray, sigma_E_vals: np.ndarray
+    ) -> float:
         """Calculate the standard error of the number of hits in a bin"""
 
         pij = self.pij(E_vals, sigma_E_vals, a_j, b_j)

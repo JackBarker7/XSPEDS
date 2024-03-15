@@ -57,7 +57,9 @@ def bfs(
     return (current_hit, visited)
 
 
-def gaussian_2d(xy: np.ndarray, a: float, mu_x: float, sigma_x: float, mu_y: float, sigma_y: float) -> np.ndarray:
+def gaussian_2d(
+    xy: np.ndarray, a: float, mu_x: float, sigma_x: float, mu_y: float, sigma_y: float
+) -> np.ndarray:
     """2D Gaussian model for fitting hits. Returns as 1D array, as required by scipy"""
     x, y = xy
     return np.ravel(
@@ -206,7 +208,6 @@ class SPC(object):
             self.all_hit_uncertainties = np.concatenate(
                 (self.primary_hit_uncertainties, self.secondary_hit_uncertainties)
             )
-
 
     def remove_noise(self) -> None:
         """Subtract master dark image from provided image"""
@@ -433,7 +434,9 @@ class SPC(object):
 
         return used_secondaries, visited_valid
 
-    def get_secondary_hits(self, used_secondaries: np.ndarray, visited_valid: np.ndarray) -> None:
+    def get_secondary_hits(
+        self, used_secondaries: np.ndarray, visited_valid: np.ndarray
+    ) -> None:
 
         all_secondary_pixels = np.array(np.nonzero(self.secondary_hits)).transpose()
 
