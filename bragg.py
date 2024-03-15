@@ -1,51 +1,27 @@
 import numpy as np
-from histograms import make_histogram
 from scipy import ndimage, constants
 from scipy.signal import find_peaks
-from scipy.optimize import least_squares
-import itertools
+from scipy.optimize import least_squares, curve_fit, OptimizeWarning
+from scipy.special import erf
+from spc import SPC
+import sympy as sp
+import math
+import sys
 
+np.set_printoptions(threshold=sys.maxsize)
 
-# def find_circle(
-#     x1: float, x2: float, x3: float, y1: float, y2: float, y3: float
-# ) -> tuple[float, float, float]:
-#     """Finds the equation of the circle (x-a)^2 + (y-b)^2 = r^2 that passes through
-#     the points (x1, y1), (x2, y2), and (x3, y3)."""
-#     x1 = np.float64(x1)
-#     x2 = np.float64(x2)
-#     x3 = np.float64(x3)
-#     y1 = np.float64(y1)
-#     y2 = np.float64(y2)
-#     y3 = np.float64(y3)
+import warnings
 
-#     a = (
-#         x3**2 * (y1 - y2)
-#         + (x1**2 + (y1 - y2) * (y1 - y3)) * (y2 - y3)
-#         + x2**2 * (-y1 + y3)
-#     ) / (2 * (x3 * (y1 - y2) + x1 * (y2 - y3) + x2 * (-y1 + y3)))
-#     b = (
-#         -(x2**2) * x3
-#         + x1**2 * (-x2 + x3)
-#         + x3 * (y1**2 - y2**2)
-#         + x1 * (x2**2 - x3**2 + y2**2 - y3**2)
-#         + x2 * (x3**2 - y1**2 + y3**2)
-#     ) / (2 * (x3 * (y1 - y2) + x1 * (y2 - y3) + x2 * (-y1 + y3)))
-#     r = 0.5 * np.sqrt(
-#         (
-#             (x1**2 - 2 * x1 * x2 + x2**2 + (y1 - y2) ** 2)
-#             * (x1**2 - 2 * x1 * x3 + x3**2 + (y1 - y3) ** 2)
-#             * (x2**2 - 2 * x2 * x3 + x3**2 + (y2 - y3) ** 2)
-#         )
-#         / (x3 * (-y1 + y2) + x2 * (y1 - y3) + x1 * (-y2 + y3)) ** 2
-#     )
-
-#    return a, b, r
+# Allows warnings to be caught and handled as exceptions
+warnings.filterwarnings("error")
 
 
 def hyperbola(
     Econst: float, y: float, xc: float, yc: float, D2: float, Ys: float
 ) -> float:
-    """We define Econst = E^2/k^2 - 1"""
+    """
+    Return the x value of a hyperbola at a given y value, given the hyperbola parameters.
+    I define Econst = E^2/k^2 - 1"""
     return xc + np.sqrt((1 / Econst) * (D2 + Ys * (y - yc) ** 2))
 
 
@@ -58,42 +34,29 @@ def make_lineout(img: np.ndarray, y: int, dy: int, xavg_period: int) -> np.ndarr
     )
 
 
-# def create_arc_mask(
-#     img: np.ndarray, radius: float, center: tuple[float, float], width: float
-# ) -> np.ndarray:
-#     """Create an arc mask for a given arc radius, center (in format (x,y)), and width."""
-#     center = center[::-1]
-#     x, y = np.indices((img.shape))
-#     r = np.sqrt((x - center[0]) ** 2 + (y - center[1]) ** 2)
-#     mask = np.logical_and(r > radius - width / 2, r < radius + width / 2)
-#     return mask
+def gaussian(x: np.ndarray, a: float, mu: float, sigma: float) -> np.ndarray:
+    """Return a Gaussian distribution with mean mu and standard deviation sigma"""
+    return a / np.sqrt(2 * np.pi) / sigma * np.exp(-((x - mu) ** 2) / (2 * sigma**2))
 
 
-def sobel_matrix(shape: tuple[int, int], absolute=True) -> np.ndarray:
-    """Return the absolute value of elements in the Sobel operator for a given shape.
-    Shape should represent a square matrix with odd dimensions."""
+def sobel_matrix(size: int, absolute: bool = True) -> np.ndarray:
+    """Returns Sobel matrix, for custom size. Method is as defined in report.
+    If absolute is True, returns absolute value of matrix."""
 
-    assert shape[0] == shape[1], "Shape should be a square matrix"
-    assert shape[0] % 2 == 1, "Shape should have odd dimensions"
+    # Row is expanded Sobel kernel
+    row = np.zeros(size)
+    n=size-2
+    for i in range(1,n+1):
+        row[i] = math.comb(n,i-1) - math.comb(n,i)
 
-    k = np.zeros(shape)
-    p = [
-        (j, i)
-        for j in range(shape[0])
-        for i in range(shape[1])
-        if not (i == (shape[1] - 1) / 2.0 and j == (shape[0] - 1) / 2.0)
-    ]
+    # Col is Gaussian smoothing kernel, with SD size/4    
+    col = gaussian(np.arange(size), 1, size//2, size/4).reshape(-1, 1)
 
-    for j, i in p:
-        j_ = int(j - (shape[0] - 1) / 2.0)
-        i_ = int(i - (shape[1] - 1) / 2.0)
-        k[j, i] = i_ / float(i_ * i_ + j_ * j_)
-
+    kernel = row * col
     if absolute:
-        return np.abs(k)
+        return np.abs(kernel)
     else:
-        return k
-    # return k
+        return kernel
 
 
 def convolve_image(image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
@@ -105,59 +68,40 @@ def locate_peaks(
     lineout: np.ndarray, n_peaks: int, min_sep: int
 ) -> tuple[np.ndarray, np.ndarray]:
     """Locate peaks in lineout. Peaks are separated by at least min_sep pixels.
-
     Returns peak locations in array, as well as their values, in the format (locs, values)
     """
 
     peaks, _ = find_peaks(lineout, distance=min_sep)
-
     peaks = peaks[np.argsort(lineout[peaks])[-n_peaks:]]
-
     return peaks, lineout[peaks]
 
 
-# def create_line_histogram(
-#     img: np.ndarray,
-#     radius: float,
-#     center: tuple[float, float],
-#     width: float,
-#     n_bins: int,
-#     normalisation_method="divide",
-# ) -> tuple[np.ndarray, np.ndarray]:
-#     """Create a histogram with n_bins bins of the pixels in a line of width width,
-#     centered at center, and with radius radius.
+def peak_uncertainties(
+    lineout: np.ndarray, peak_locs: np.ndarray, fit_half_width=50
+) -> np.ndarray:
+    """Calculate the uncertainties of the locations of the peaks in a lineout, by
+    fitting Gaussians to their neighbourhoods and taking the SD as the uncertainty"""
+    lineout = lineout / np.max(lineout)
 
-#     There are 3 possible normalisation methods: "divide" and "subtract".
-#     - "divide" divides the line histogram by the image histogram
-#     - "subtract" subtracts the image histogram from the line histogram,
-#         appropriately normalised by the number of pixels in each
-#     - "none" does no normalisation
-#     """
+    fit_areas = [
+        lineout[peak_locs[i] - fit_half_width : peak_locs[i] + fit_half_width]
+        for i in range(len(peak_locs))
+    ]
 
-#     mask = create_arc_mask(img, radius, center, width)
+    try:
+        fit_params = [
+            curve_fit(gaussian, np.arange(len(area)), area, p0=[1, fit_half_width, 1])
+            for area in fit_areas
+        ]
 
-#     line_data = np.where(mask, img, 0).flatten()
-#     line_data = line_data[line_data != 0]
+    except OptimizeWarning:
+        # If fitting failed, return 0s
+        print(f"peak uncertainty fit failed for {peak_locs}")
+        return np.zeros(len(peak_locs))
 
-#     line_bin_centres, line_hist_data = make_histogram(line_data, n_bins)
-#     _, img_hist_data = make_histogram(img, n_bins)
+    sds = [fit_params[i][0][2] for i in range(len(fit_params))]
 
-#     n_pixels_in_line = len(line_data)
-
-#     if normalisation_method == "divide":
-#         normalised = line_hist_data / img_hist_data
-#     elif normalisation_method == "subtract":
-#         normalised = line_hist_data / n_pixels_in_line - img_hist_data / (
-#             img.shape[0] * img.shape[1]
-#         )
-#     elif normalisation_method == "none":
-#         normalised = line_hist_data
-#     else:
-#         raise ValueError(
-#             "normalisation_method must be one of 'divide', 'subtract', or 'none'"
-#         )
-
-#     return line_bin_centres, normalised
+    return np.array(sds)
 
 
 class EnergyMap(object):
@@ -170,16 +114,16 @@ class EnergyMap(object):
         xavg_period: int,
         n_lines: int,
         min_sep: int,
-        sobel_shape: tuple[int, int],
+        sobel_size: int,
         energies: list[float],
-    ):
+    ) -> None:
         self.img = img.copy()
         self.dy = dy
         self.num_lineout_points = num_lineout_points
         self.xavg_period = xavg_period
         self.n_lines = n_lines
         self.min_sep = min_sep
-        self.sobel_shape = sobel_shape
+        self.sobel_size = sobel_size
         # highest energy first as this is the order the peaks will be found in
         self.energies = np.array(sorted(energies, reverse=True))
         self.centre: tuple[float, float] = None
@@ -188,7 +132,7 @@ class EnergyMap(object):
         self.k: float = constants.h * constants.c / (self.two_d * constants.e)
         self.hyp_params: np.ndarray = None
 
-        self.sobel = sobel_matrix(sobel_shape)
+        self.sobel = sobel_matrix(sobel_size)
 
         self.convolved_img = convolve_image(self.img, self.sobel)
 
@@ -196,21 +140,25 @@ class EnergyMap(object):
 
         self.create_energy_map()
 
-    def calculate_map_parameters(self):
+    def calculate_map_parameters(self) -> None:
+        """
+        Calculate the energy map parameters.
+        Lineouts are taken across the image, and peaks are located with associated uncertainties.
+        Hypoerbola are fit to the peaks using least squares fitting.
+        Uncertainties are calculated from the fitting process and the peak uncertainties.
+        """
 
         # Take lineouts at a range of y values across the image
 
         yvals = np.linspace(
             self.dy, self.img.shape[0] - self.dy, self.num_lineout_points, dtype=int
         )
-
         lineouts = [
             make_lineout(self.convolved_img, y, self.dy, self.xavg_period)
             for y in yvals
         ]
 
         # locate the peaks in each lineout
-
         peak_locs = np.array(
             [
                 locate_peaks(lineout, self.n_lines, self.min_sep)[0]
@@ -218,10 +166,17 @@ class EnergyMap(object):
             ]
         )
 
+        # uncertainties in the format [[uncs for lineout 1], [uncs for lineout 2], ...]
+        peak_uncs = np.array(
+            [
+                peak_uncertainties(lineout, peak_loc)
+                for lineout, peak_loc in zip(lineouts, peak_locs)
+            ]
+        )
+
         # Perform least squares fitting to both lines simulataneously
 
         def least_sq(params, *args):
-
             # params is (xc, yc, D2, Ys)
             xc = params[0]
             yc = params[1]
@@ -245,235 +200,225 @@ class EnergyMap(object):
             # return the residual
             return np.concatenate((x1fit, x2fit)) - x
 
+        # params are xc, yc, D2, ys
         p0 = [50, 750, 1.45e7, 0.2]
-        bounds = ([-5000, 600, 1.4e7, 0], [1000, 1000, 1.5e7, 1])
+        bounds = ([-5000, 600, 1e7, 0], [1000, 1000, 2e7, 1])
         Econsts = self.energies**2 / self.k**2 - 1
 
         xvals = np.concatenate((peak_locs[:, 0], peak_locs[:, 1]))
+        xuncs = np.concatenate((peak_uncs[:, 0], peak_uncs[:, 1]))
 
         args = (yvals, xvals, Econsts)
-
         fit_result = least_squares(least_sq, p0, args=args, bounds=bounds)
 
-        # calculate uncertainties using the jacobian
+        # calculate extremes of the fit from the x uncertainties
+        x_ext_1 = xvals - xuncs
+        x_ext_2 = xvals + xuncs
+        args_ext_1 = (yvals, x_ext_1, Econsts)
+        args_ext_2 = (yvals, x_ext_2, Econsts)
 
+        fit_ext_1 = least_squares(least_sq, p0, args=args_ext_1, bounds=bounds)
+        fit_ext_2 = least_squares(least_sq, p0, args=args_ext_2, bounds=bounds)
+
+        # calculate the uncertainties in the fit parameters
+        peak_param_uncs = (fit_ext_2.x - fit_ext_1.x) / np.sqrt(len(yvals))
+        print(f"Uncertainties due to peak uncertainties: {peak_param_uncs}")
+
+        # calculate uncertainties from the fitting process using the jacobian
         cov = np.linalg.inv(fit_result.jac.T @ fit_result.jac)
+        cov_param_uncs = np.sqrt(np.diag(cov))
+        print(f"Uncertainties due to fitting process: {cov_param_uncs}")
 
-        self.hyp_uncertainties = np.sqrt(np.diag(cov))
+        # combine these uncertainties
+        self.hyp_uncertainties = np.sqrt(peak_param_uncs**2 + cov_param_uncs**2)
 
         self.hyp_params = fit_result.x
 
-    def calculate_energy(self, loc: tuple[float, float]):
+    def calculate_energy(self, loc: tuple[float, float]) -> float:
         """Calculate the energy at a given location"""
 
         xc, yc, D2, Ys = self.hyp_params
-
         y, x = loc
-
         return self.k * np.sqrt(1 + (D2 + Ys * (y - yc) ** 2) / ((x - xc) ** 2))
 
-    def create_energy_map(self):
+    def create_energy_map(self) -> None:
+        """Creates a 2D array the same shape as the image, containing the energies of each pixel"""
 
         indices = np.indices(self.img.shape)
-
         self.energy_map: np.ndarray = self.calculate_energy(indices)
 
-    def get_energies(self, locs: np.ndarray):
+    def get_energies(self, locs: np.ndarray) -> None:
         """Get energies from array positions"""
+
         energies = np.array([self.energy_map[int(loc[0]), int(loc[1])] for loc in locs])
         return energies
 
 
-# class OldEnergyMap(object):
+class Spectrum(object):
 
-#     def __init__(
-#         self,
-#         img: np.ndarray,
-#         num_lineout_points: int,
-#         dy: int,
-#         xavg_period: int,
-#         n_lines: int,
-#         min_sep: int,
-#         sobel_shape: tuple[int, int],
-#         energies: list[float],
-#     ):
-#         self.img = img.copy()
-#         self.dy = dy
-#         self.num_lineout_points = num_lineout_points
-#         self.xavg_period = xavg_period
-#         self.n_lines = n_lines
-#         self.min_sep = min_sep
-#         self.sobel_shape = sobel_shape
-#         self.energies = energies
-#         self.centre: tuple[float, float] = None
-#         self.k: float = None
-#         self.D: float = None
-#         self.A = 1.0
-#         self.B = 0.0
-#         self.energy_calibrated = False
+    def __init__(
+        self,
+        spc: SPC,
+        em: EnergyMap,
+        bin_width: float,
+        Emin: float,
+        Emax: float,
+        uncertainty_method="full",
+    ) -> None:
+        self.spc = spc
+        self.em = em
+        self.bin_width = bin_width
+        self.Emin = Emin
+        self.Emax = Emax
+        self.uncertainty_method = uncertainty_method
 
-#         self.sobel = sobel_matrix(sobel_shape)
+        self.hit_locs = spc.all_hit_locations
+        self.hit_loc_uncs = spc.all_hit_uncertainties
+        self.energies = np.array([em.calculate_energy(loc) for loc in self.hit_locs])
 
-#         self.convolved_img = convolve_image(self.img, self.sobel)
+        self.k = em.k
+        (
+            self.xc,
+            self.yc,
+            self.D2,
+            self.Ys,
+        ) = em.hyp_params
 
-#         self.calculate_map_parameters()
+        # cannot do full uncertainty calculation if no uncertainties calculated by SPC
+        assert not (
+            (not spc.fit_hits) and self.uncertainty_method == "full"
+        ), "Cannot use full uncertainty method without hit uncertainties"
 
-#         # make sure r1, r2 and E1, E2 are in the correct order
-#         if self.r1 > self.r2:
-#             self.r1, self.r2 = self.r2, self.r1
-#         self.energies = sorted(self.energies)
+        # If "full" method is used, calculate the energy uncertainties from the
+        # uncertainty in the hit locations. Otherwise, just use the Poisson counting
+        # uncertainty
+        if self.uncertainty_method == "full":
+            self.energy_uncs = self.sigma_E(*self.hit_locs.T, *self.hit_loc_uncs.T)
+        elif self.uncertainty_method == "poisson":
+            self.energy_uncs = np.zeros(len(self.energies))
+        else:
+            raise ValueError("uncertainty_method must be one of 'full' or 'poisson'")
 
-#         self.create_energy_map()
+        self.make_spectrum()
 
-#     def locate_bragg_lines(self, search_ys: list[int]) -> list[list[float]]:
-#         """Locate Bragg lines in an image. Search for n_lines lines by looking at lineouts
-#         of the convolved image at 3 y locations, determined by search_ys.
+    def sigma_E(self, x: float, y: float, sigma_x: float, sigma_y: float) -> float:
+        """Calculate the energy uncertainty for a given hit location uncertainty"""
+        dEdx2 = (
+            self.Ys
+            * self.k
+            * (2 * y - 2 * self.yc)
+            / (
+                2
+                * (x - self.xc) ** 2
+                * np.sqrt(
+                    (self.D2 + self.Ys * (y - self.yc) ** 2) / (x - self.xc) ** 2 + 1
+                )
+            )
+        ) ** 2
+        dEdy2 = (
+            -self.k
+            * (self.D2 + self.Ys * (y - self.yc) ** 2)
+            / (
+                (x - self.xc) ** 3
+                * np.sqrt(
+                    (self.D2 + self.Ys * (y - self.yc) ** 2) / (x - self.xc) ** 2 + 1
+                )
+            )
+        ) ** 2
 
-#         Lineouts have a width of 2*dy and are averaged over xavg_period pixels.
+        return np.sqrt(dEdx2 * sigma_x**2 + dEdy2 * sigma_y**2)
 
-#         Bragg lines must be sepateted by at least min_sep pixels.
+    def systematic_sigma_E(self, x: float, y: float) -> float:
+        """Returns the systematic uncertainty in an energy value at a given location"""
+        dEdx_c2 = (
+            self.k
+            * (self.D2 + self.Ys * (y - self.yc) ** 2)
+            / (
+                (x - self.xc) ** 3
+                * np.sqrt(
+                    (self.D2 + self.Ys * (y - self.yc) ** 2) / (x - self.xc) ** 2 + 1
+                )
+            )
+        ) ** 2
 
-#         Returns centres of Bragg lines and their radii, in the format [[h1, k1, r1], [h2, k2, r2], ...]
+        dEdy_c2 = (
+            self.Ys
+            * self.k
+            * (-2 * y + 2 * self.yc)
+            / (
+                2
+                * (x - self.xc) ** 2
+                * np.sqrt(
+                    (self.D2 + self.Ys * (y - self.yc) ** 2) / (x - self.xc) ** 2 + 1
+                )
+            )
+        ) ** 2
 
-#         Returned in descending order of radius (largest radius first)
-#         """
+        dEdD22 = (
+            self.k
+            / (
+                2
+                * (x - self.xc) ** 2
+                * np.sqrt(
+                    (self.D2 + self.Ys * (y - self.yc) ** 2) / (x - self.xc) ** 2 + 1
+                )
+            )
+        ) ** 2
 
-#         assert min(search_ys) - self.dy >= 0, "Lineout would be out of bounds"
-#         assert (
-#             max(search_ys) + self.dy < self.img.shape[0]
-#         ), "Lineout would be out of bounds"
+        dEdY_s2 = (
+            self.k
+            * (y - self.yc) ** 2
+            / (
+                2
+                * (x - self.xc) ** 2
+                * np.sqrt(
+                    (self.D2 + self.Ys * (y - self.yc) ** 2) / (x - self.xc) ** 2 + 1
+                )
+            )
+        ) ** 2
 
-#         # get the three lineouts
-#         lineouts = [
-#             make_lineout(self.convolved_img, y, self.dy, self.xavg_period)
-#             for y in search_ys
-#         ]
+        sigma_x_c, sigma_y_c, sigma_D2, sigma_Y_s = self.em.hyp_uncertainties
 
-#         # locate the peaks in each lineout
-#         # so, we have [[peak1, peak2], [peak1, peak2], [peak1, peak2]
-#         peak_locs = [
-#             locate_peaks(lineout, self.n_lines, self.min_sep)[0] for lineout in lineouts
-#         ]
-#         # transpose this list so that we have [[peak1, peak1, peak1], [peak2, peak2, peak2]]
-#         peak_locs = np.array(peak_locs).T
+        return np.sqrt(
+            dEdx_c2 * sigma_x_c**2
+            + dEdy_c2 * sigma_y_c**2
+            + dEdD22 * sigma_D2**2
+            + dEdY_s2 * sigma_Y_s**2
+        )
 
-#         bragg_lines = []
+    def pij(self, Ei: float, sigma_Ei: float, a_j: float, b_j: float) -> float:
+        """Calculate the probability of a hit i being in bin j, given the energy Ei
+        and its uncertainty sigma_Ei"""
 
-#         for bragg_line_locs in peak_locs:
-#             # peak_locs gives the x locations of the peaks in the lineout
+        u_a = (a_j - Ei) / np.sqrt(2) / sigma_Ei
+        u_b = (b_j - Ei) / np.sqrt(2) / sigma_Ei
 
-#             bragg_lines.append(find_circle(*bragg_line_locs, *search_ys))
+        return 0.5 * (erf(u_b) - erf(u_a))
 
-#         return sorted(bragg_lines, key=lambda x: x[2], reverse=True)
+    def bin_count_unc(self, a_j: float, b_j: float, E_vals: np.ndarray, sigma_E_vals: np.ndarray) -> float:
+        """Calculate the standard error of the number of hits in a bin"""
 
-#     def calculate_map_parameters(self):
+        pij = self.pij(E_vals, sigma_E_vals, a_j, b_j)
+        return np.sqrt(np.sum(pij * (1 - pij)))
 
-#         lineout_points = np.linspace(
-#             self.dy, self.img.shape[0] - 1 - self.dy, self.num_lineout_points, dtype=int
-#         )
-#         y_combinations = list(itertools.combinations(lineout_points, 3))
+    def make_spectrum(self) -> None:
+        """Make the histogram of the energies"""
 
-#         line_params = np.array(
-#             [self.locate_bragg_lines(y_comb) for y_comb in y_combinations]
-#         )
+        bins = np.arange(self.Emin, self.Emax, self.bin_width)
+        self.counts, _ = np.histogram(self.energies, bins=bins)
 
-#         x_locs = line_params[:, :, 0].flatten()
-#         y_locs = line_params[:, :, 1].flatten()
+        self.bin_centers = (bins[:-1] + bins[1:]) / 2
 
-#         r1s = line_params[:, 0, 2]
-#         r2s = line_params[:, 1, 2]
+        # Calculate the uncertainties in the counts
+        if self.uncertainty_method == "full":
+            self.energy_count_uncs = np.array(
+                [
+                    self.bin_count_unc(a, b, self.energies, self.energy_uncs)
+                    for a, b in zip(bins[:-1], bins[1:])
+                ]
+            )
+            self.poisson_uncs = np.sqrt(self.counts)
 
-#         x_med = np.median(x_locs)
-#         y_med = np.median(y_locs)
-
-#         weights = 1 / ((x_locs - x_med) ** 2 + (y_locs - y_med) ** 2)
-
-#         x_avg = np.average(x_locs, weights=weights)
-#         y_avg = np.average(y_locs, weights=weights)
-
-#         self.r1 = np.average(r1s, weights=weights[0::2])
-#         self.r2 = np.average(r2s, weights=weights[1::2])
-
-#         self.centre = (x_avg, y_avg)
-
-#     def create_energy_map(self):
-
-#         two_d = 15.96e-10
-
-#         self.k = constants.h * constants.c / (two_d * constants.e)
-
-#         E1 = self.energies[0]
-#         E2 = self.energies[1]
-
-#         D1 = self.r1 / np.sqrt(E1**2 / (self.k**2) - 1)
-#         D2 = self.r2 / np.sqrt(E2**2 / (self.k**2) - 1)
-
-#         self.D = (D1 + D2) / 2
-
-#         indices = np.indices(self.img.shape)
-
-#         Radii = (
-#             self.A
-#             * np.sqrt(
-#                 (indices[0] - self.centre[1]) ** 2 + (indices[1] - self.centre[0]) ** 2
-#             )
-#             + self.B
-#         )
-
-#         self.energy_map: np.ndarray = (self.k / self.D) * np.sqrt(Radii**2 + self.D**2)
-
-#     def calibrate_energies(self, spectrum):
-#         """Use a spectrum to improve energy map calibration"""
-#         self.energy_calibrated = True
-
-#         spectrum_x, spectrum_y = make_histogram(spectrum, -1)
-
-#         old_peaks = find_peaks(spectrum_y, distance=10)
-
-#         # get the energies of the largest 2 peaks
-#         old_peaks = spectrum_x[np.argsort(spectrum_y[old_peaks[0]])][-2:]
-
-#         # Convert these into old radii
-#         or1, or2 = sorted(self.D * np.sqrt((old_peaks / self.k) ** 2 - 1))
-#         print(self.r1, self.r2)
-#         print(or1, or2)
-#         # or1, or2 = self.r1, self.r2
-
-#         # Calculate the shifting constants A and B to get the peaks in the right place
-#         E1 = self.energies[0]
-#         E2 = self.energies[1]
-
-#         self.A = (
-#             self.D
-#             * (np.sqrt(E1**2 / (self.k**2) - 1) - np.sqrt(E2**2 / (self.k**2) - 1))
-#             / (or1 - or2)
-#         )
-#         self.B = self.D * np.sqrt(E1**2 / (self.k**2) - 1) - or1 * self.A
-
-#         indices = np.indices(self.img.shape)
-
-#         Radii = (
-#             self.A
-#             * np.sqrt(
-#                 (indices[0] - self.centre[1]) ** 2 + (indices[1] - self.centre[0]) ** 2
-#             )
-#             + self.B
-#         )
-
-#         self.energy_map: np.ndarray = (self.k / self.D) * np.sqrt(Radii**2 + self.D**2)
-
-#     def get_energies(self, locs: np.ndarray):
-#         """Get energies from array positions"""
-#         print(locs)
-#         energies = np.array([self.energy_map[int(loc[0]), int(loc[1])] for loc in locs])
-#         return energies
-
-#     def calculate_energy(self, loc: tuple[float, float]):
-#         """Calculate the energy at a given location"""
-#         R = (
-#             self.A
-#             * np.sqrt((loc[0] - self.centre[1]) ** 2 + (loc[1] - self.centre[0]) ** 2)
-#             + self.B
-#         )
-
-#         return (self.k / self.D) * np.sqrt(R**2 + self.D**2)
+            self.count_uncs = np.sqrt(self.energy_count_uncs**2 + self.poisson_uncs**2)
+        elif self.uncertainty_method == "poisson":
+            self.count_uncs = np.sqrt(self.counts)

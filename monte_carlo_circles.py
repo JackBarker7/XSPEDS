@@ -21,13 +21,19 @@ def count_double_hits(Lx, Ly, r, n_c):
     return double_hits
 
 
-def monte_carlo(Lx, Ly, r, n_c, n_trials):
+def monte_carlo(Lx, Ly, r, n_c, n_trials, verbose=0):
 
     double_hits = np.zeros(n_trials)
 
     for i in range(n_trials):
-        print(f"Trial: {i+1}/{n_trials}")
+        if verbose >= 2:
+            print(f"Trial: {i+1}/{n_trials}")
         double_hits[i] = count_double_hits(Lx, Ly, r, n_c)
+
+    if verbose >= 1:
+        print(
+            f"Mean double hits: {double_hits.mean()}, Standard deviation: {double_hits.std()}"
+        )
 
     return [double_hits.mean(), double_hits.std()]
 
