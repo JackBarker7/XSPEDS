@@ -3,16 +3,9 @@ import itertools
 import numpy as np
 
 
-
 def h5_to_numpy(f_name="data/sxro6416-r0504.h5") -> None:
-    """Extracts image data from h5 files, and saves them to numpy arrays
-    
-    ### Parameters
-    1. f_name : str
-        h5 file name
-        
-    ### Returns
-    None"""
+    """Extracts image data from h5 files, and saves them to numpy arrays"""
+
     datafile = h5py.File(f_name, "r")
     image_data = []
     for i in itertools.count(start=0):
@@ -35,5 +28,3 @@ def load_image(filepath: str) -> np.ndarray:
     """Loads image stored as a numpy array"""
     with open(filepath, "rb") as f:
         return np.load(f)
-
-

@@ -1,4 +1,7 @@
-/env
-/homeenv
-/__pycache__
-/.vscode
+homeenv/
+env/
+__pycache__/
+logbook/
+old_code/
+images/
+.vscode/

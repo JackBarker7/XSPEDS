@@ -48,6 +48,9 @@ def sobel_matrix(size: int, absolute: bool = True) -> np.ndarray:
     for i in range(1, n + 1):
         row[i] = math.comb(n, i - 1) - math.comb(n, i)
 
+    row[0] = -1
+    row[-1] = 1
+
     # Col is Gaussian smoothing kernel, with SD size/4
     col = gaussian(np.arange(size), 1, size // 2, size / 4).reshape(-1, 1)
 
@@ -59,7 +62,9 @@ def sobel_matrix(size: int, absolute: bool = True) -> np.ndarray:
 
 
 def convolve_image(image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
-    """Convolve an image with a kernel. Pad edges with 0s to get a consistent shape"""
+    """Convolve an image with a kernel. Pad edges with 0s to get a consistent shape.
+    Padding with zeros is appropriate since the mean noise level of the image should
+    be reduced to 0 in the SPC stage."""
     return ndimage.convolve(image, kernel, mode="constant", cval=0.0)
 
 
@@ -116,7 +121,6 @@ class EnergyMap(object):
         sobel_size: int,
         energies: list[float],
     ) -> None:
-        
         """Initialises an energy map.
 
         `num_lineout_points` specifies number of y points to take lineouts at.
@@ -131,7 +135,7 @@ class EnergyMap(object):
         `sobel_size` is the size of the Sobel matrix
 
         `energies` is the energies of the Bragg lines. These are ordered automatically.
-        
+
         """
 
         self.img = img.copy()

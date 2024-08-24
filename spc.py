@@ -138,20 +138,19 @@ class SPC(object):
         fit_hits: bool = True,
     ) -> None:
         """Initialise an SPC object.
-        `include_bad_fits` determines whether to keep or discard points for which the 
+        `include_bad_fits` determines whether to keep or discard points for which the
         Gaussian fit failed.
-        
+
         `padding` determines how much padding to add to the outside of the image, to allow
         hits at the edge to be fitted properly.
-        
+
         `fit_area_size` determines how large an area around each hit to fit to.
-        
+
         `image_indices` means SPC is only applied to a subset of the image. Format is
         [(min_row, max_row), (min_col, max_col)]
-        
+
         `fit_hits` determines whether to fit a Gaussian to each hit or not.
         """
-
 
         # initialise attributes
         self.raw_img = img.copy()
@@ -165,6 +164,7 @@ class SPC(object):
         self.fit_hits = fit_hits
 
         self.img: np.ndarray = None
+        self.master_dark: np.ndarray = None
         self.pedestal_params: np.ndarray = None
         self.pedestal_sigma: float = None
         self.n_single_hits: int = 0
@@ -227,16 +227,16 @@ class SPC(object):
 
     def remove_noise(self) -> None:
         """Subtract master dark image from provided image"""
-        master_dark = np.load("data/master_dark.npy")
+        self.master_dark = np.load("data/master_dark.npy")
         if self.image_indices is None:
-            self.img = self.raw_img - master_dark
+            self.img = self.raw_img - self.master_dark
         else:
             self.img = (
                 self.raw_img[
                     self.image_indices[0][0] : self.image_indices[0][1],
                     self.image_indices[1][0] : self.image_indices[1][1],
                 ]
-                - master_dark[
+                - self.master_dark[
                     self.image_indices[0][0] : self.image_indices[0][1],
                     self.image_indices[1][0] : self.image_indices[1][1],
                 ]
