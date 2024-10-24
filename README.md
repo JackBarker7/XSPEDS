@@ -1,5 +1,7 @@
 # X-Ray Single-Photon Energy-Dispersive Spectroscopy (XSPEDS)
 
+![image](https://github.com/user-attachments/assets/e79aa847-e923-4078-b36a-51015406145a)
+
 This is the code for a project I did in the third year of my physics degree at the University of Oxford.
 
 ## Running the code
